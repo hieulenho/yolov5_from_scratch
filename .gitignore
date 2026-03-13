@@ -1,0 +1,22 @@
+# Dataset / data nặng
+datasets/
+coco 2017/
+data/raw/
+
+# Output train / weight
+runs/
+checkpoints/
+*.pt
+*.pth
+*.onnx
+
+# Cache / temp
+__pycache__/
+.ipynb_checkpoints/
+*.pyc
+*.pyo
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
