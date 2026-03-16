@@ -51,7 +51,7 @@ def resolve_data_root(data_yaml, cfg_path_value):
 def img2label_path(im_file: Path, data_root: Path) -> Path:
     rel = im_file.relative_to(data_root)
     parts = list(rel.parts)
-    if parts[0] != "images":
+    if parts[0] != "images":    
         raise ValueError(f"Expected image path under 'images/', got: {im_file}")
     parts[0] = "labels"
     return data_root.joinpath(*parts).with_suffix(".txt")
