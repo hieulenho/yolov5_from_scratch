@@ -1,7 +1,5 @@
-import os
 import cv2
 import yaml
-import math
 import time
 import random
 import pickle
@@ -51,7 +49,7 @@ def resolve_data_root(data_yaml, cfg_path_value):
 def img2label_path(im_file: Path, data_root: Path) -> Path:
     rel = im_file.relative_to(data_root)
     parts = list(rel.parts)
-    if parts[0] != "images":    
+    if parts[0] != "images":
         raise ValueError(f"Expected image path under 'images/', got: {im_file}")
     parts[0] = "labels"
     return data_root.joinpath(*parts).with_suffix(".txt")
@@ -186,7 +184,6 @@ def letterbox(
     if isinstance(new_shape, int):
         new_shape = (new_shape, new_shape)
 
-    # scale ratio
     r = min(new_shape[0] / shape[0], new_shape[1] / shape[1])
     if not scaleup:
         r = min(r, 1.0)
@@ -246,8 +243,6 @@ def augment_hsv(image, hgain=0.015, sgain=0.7, vgain=0.4):
 
 class YOLODataset(Dataset):
     """
-    Production-friendly baseline dataset for YOLO-style training.
-
     Output per sample:
         img_tensor:  [3, H, W], float32 in [0,1]
         targets:     [N, 5], float32, [cls, x, y, w, h] normalized
@@ -310,7 +305,6 @@ class YOLODataset(Dataset):
         self.cache_path = self.data_root / f".{split}_labels.cache.pkl"
         self.samples = self._load_or_build_cache() if cache_labels else self._build_cache(save=False)
 
-        # optional image cache
         self.imgs = [None] * len(self.samples) if cache_images else None
 
         if self.verbose:
@@ -353,16 +347,17 @@ class YOLODataset(Dataset):
                     "im_file": str(im_file),
                     "label_file": str(label_file),
                     "shape": (h, w),
-                    "labels": labels,
+                    "labels": labels.astype(np.float32),
                 }
             )
 
         if save:
             payload = {
-                "version": 1,
+                "version": 2,
                 "data_root": str(self.data_root),
                 "split": self.split,
                 "img_size": self.img_size,
+                "num_classes": self.num_classes,
                 "samples": samples,
             }
             with open(self.cache_path, "wb") as f:
@@ -384,9 +379,10 @@ class YOLODataset(Dataset):
                     payload = pickle.load(f)
 
                 if (
-                    payload.get("version") == 1
+                    payload.get("version") == 2
                     and payload.get("data_root") == str(self.data_root)
                     and payload.get("split") == self.split
+                    and payload.get("num_classes") == self.num_classes
                 ):
                     if self.verbose:
                         print(f"[cache] loaded {self.cache_path}")
@@ -420,17 +416,13 @@ class YOLODataset(Dataset):
     def __getitem__(self, index):
         sample = self.samples[index]
 
-        # 1) image
         img = self._load_image(index)
         h0, w0 = img.shape[:2]
 
-        # 2) labels: [N,5] normalized on original image
         labels = self._load_labels(index)
 
-        # 3) convert to xyxy pixels on original image
         labels_xyxy = yolo_xywhn_to_xyxy(labels, w0, h0)
 
-        # 4) letterbox
         img, ratio, (dw, dh) = letterbox(
             img,
             new_shape=(self.img_size, self.img_size),
@@ -441,14 +433,12 @@ class YOLODataset(Dataset):
         )
         h, w = img.shape[:2]
 
-        # 5) move boxes with same resize + pad
         if labels_xyxy.size > 0:
             labels_xyxy[:, [1, 3]] = labels_xyxy[:, [1, 3]] * ratio[0] + dw
             labels_xyxy[:, [2, 4]] = labels_xyxy[:, [2, 4]] * ratio[1] + dh
             labels_xyxy = clip_boxes_xyxy(labels_xyxy, w, h)
             labels_xyxy = filter_invalid_boxes_xyxy(labels_xyxy, min_size=2.0)
 
-        # 6) lightweight augment
         if self.augment:
             img = augment_hsv(
                 img,
@@ -464,19 +454,16 @@ class YOLODataset(Dataset):
                 labels_xyxy[:, 1] = w - x2
                 labels_xyxy[:, 3] = w - x1
 
-        # 7) back to normalized xywh
         targets = xyxy_to_yolo_xywhn(labels_xyxy, w, h)
 
-        # 8) final clamp
         if targets.size > 0:
             targets[:, 1:] = np.clip(targets[:, 1:], 0.0, 1.0)
 
-        # 9) image -> tensor
-        img = np.ascontiguousarray(img.transpose(2, 0, 1))  # HWC -> CHW
+        img = np.ascontiguousarray(img.transpose(2, 0, 1))
         img_tensor = torch.from_numpy(img).float().div_(255.0)
 
-        # 10) targets -> tensor
-        targets_tensor = torch.from_numpy(targets).float()
+        targets = np.ascontiguousarray(targets, dtype=np.float32)
+        targets_tensor = torch.from_numpy(targets)
 
         meta = {
             "im_file": sample["im_file"],
@@ -484,6 +471,7 @@ class YOLODataset(Dataset):
             "resized_shape": (h, w),
             "ratio": ratio,
             "pad": (dw, dh),
+            "num_classes": self.num_classes,
         }
 
         return img_tensor, targets_tensor, meta
@@ -503,7 +491,8 @@ def yolo_collate_fn(batch):
     for i, t in enumerate(targets):
         if t.numel() == 0:
             continue
-        batch_idx = torch.full((t.shape[0], 1), i, dtype=t.dtype)
+        batch_idx = torch.full((t.shape[0], 1), float(i), dtype=torch.float32)
+        t = t.to(torch.float32)
         t = torch.cat([batch_idx, t], dim=1)
         new_targets.append(t)
 
