@@ -13,7 +13,7 @@ from models.yolo import YOLOv5FromScratch
 from loss.loss import YoloLoss
 
 
-def main():
+def main(): # Kiểm tra loss và gradient
     torch.manual_seed(0)
 
     data_yaml = ROOT / "datasets" / "coco2017" / "dataset.yaml"
