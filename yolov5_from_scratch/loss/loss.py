@@ -38,7 +38,7 @@ class YoloLoss(nn.Module):
         self,
         head,
         nc=80,
-        anchor_t=4.0,
+        anchor_t=8.0,
         box_gain=0.05,
         obj_gain=1.0,
         cls_gain=0.5,
