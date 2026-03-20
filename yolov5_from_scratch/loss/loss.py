@@ -38,7 +38,7 @@ class YoloLoss(nn.Module):
         self,
         head,
         nc=80,
-        anchor_t=8.0,
+        anchor_t=6.0,
         box_gain=0.05,
         obj_gain=1.0,
         cls_gain=0.5,
@@ -48,8 +48,10 @@ class YoloLoss(nn.Module):
         self.nl = head.nl
         self.na = head.na
 
-        self.register_buffer("anchors", head.anchors.clone())  # [nl, na, 2] pixel-space
-        self.register_buffer("stride", head.stride.clone())    # [nl]
+        # head.anchors: [nl, na, 2] in pixel space
+        # head.stride:  [nl]
+        self.register_buffer("anchors", head.anchors.clone())
+        self.register_buffer("stride", head.stride.clone())
 
         self.anchor_t = anchor_t
         self.box_gain = box_gain
@@ -64,9 +66,10 @@ class YoloLoss(nn.Module):
         """
         preds: list of 3 tensors
             p[i] shape = [B, A, H, W, no]
-        targets: [M, 6] = [batch_idx, cls, x, y, w, h] normalized to image
+        targets: [M, 6] = [batch_idx, cls, x, y, w, h]
+                 xywh are normalized to input image size
         """
-        device = targets.device
+        device = preds[0].device
         tcls, tbox, indices, anch = [], [], [], []
 
         if targets.shape[0] == 0:
@@ -78,31 +81,42 @@ class YoloLoss(nn.Module):
                 anch.append(torch.zeros((0, 2), dtype=torch.float32, device=device))
             return tcls, tbox, indices, anch
 
-        nt = targets.shape[0]
-
         for i, p in enumerate(preds):
-            bsz, na, ny, nx, no = p.shape
+            _, _, ny, nx, _ = p.shape
 
-            # convert normalized-image xywh -> grid xywh
-            gain = torch.tensor([1, 1, nx, ny, nx, ny], device=device, dtype=targets.dtype)
-            t = targets * gain  # [nt, 6]
+            # normalized image xywh -> grid xywh
+            gain = targets.new_tensor([1, 1, nx, ny, nx, ny])
+            t = targets * gain  # [M, 6]
+
+            b = t[:, 0].long()
+            c = t[:, 1].long()
+            gxy = t[:, 2:4]
+            gwh = t[:, 4:6]
 
             # anchors in grid units
             anchors_grid = self.anchors[i] / self.stride[i]  # [na, 2]
 
-            # repeat targets for each anchor
-            t_repeat = t[None].repeat(self.na, 1, 1)  # [na, nt, 6]
-            a_idx = torch.arange(self.na, device=device).view(self.na, 1).repeat(1, nt)
+            # choose best anchor per target on this scale
+            # r: [na, M, 2]
+            r = gwh[None] / (anchors_grid[:, None] + 1e-9)
+            max_ratio = torch.max(r, 1.0 / (r + 1e-9)).amax(dim=2)  # [na, M]
+            best_ratio, best_a = max_ratio.min(dim=0)  # [M]
 
-            # ratio matching
-            r = t_repeat[..., 4:6] / anchors_grid[:, None, :]  # [na, nt, 2]
-            max_ratio = torch.max(r, 1.0 / (r + 1e-9)).max(dim=2).values
-            mask = max_ratio < self.anchor_t
+            # normal filtering
+            keep = (gwh[:, 0] > 0) & (gwh[:, 1] > 0) & (best_ratio < self.anchor_t)
 
-            t_match = t_repeat[mask]
-            a_match = a_idx[mask]
+            # fallback: if scale matched nothing but batch has targets,
+            # keep best anchor for all valid boxes so training can start
+            if keep.sum() == 0 and targets.shape[0] > 0:
+                keep = (gwh[:, 0] > 0) & (gwh[:, 1] > 0)
 
-            if t_match.shape[0] == 0:
+            b = b[keep]
+            c = c[keep]
+            gxy = gxy[keep]
+            gwh = gwh[keep]
+            a = best_a[keep].long()
+
+            if b.numel() == 0:
                 empty_long = torch.zeros(0, dtype=torch.long, device=device)
                 tcls.append(empty_long)
                 tbox.append(torch.zeros((0, 4), dtype=torch.float32, device=device))
@@ -110,23 +124,23 @@ class YoloLoss(nn.Module):
                 anch.append(torch.zeros((0, 2), dtype=torch.float32, device=device))
                 continue
 
-            b_idx = t_match[:, 0].long()
-            c_idx = t_match[:, 1].long()
-            gxy = t_match[:, 2:4]
-            gwh = t_match[:, 4:6]
-
             gij = gxy.long()
             gi = gij[:, 0].clamp_(0, nx - 1)
             gj = gij[:, 1].clamp_(0, ny - 1)
 
-            tcls.append(c_idx)
-            tbox.append(torch.cat([gxy, gwh], dim=1))  # [n_pos, 4] in grid xywh
-            indices.append((b_idx, a_match.long(), gj, gi))
-            anch.append(anchors_grid[a_match.long()])
+            tcls.append(c)
+            tbox.append(torch.cat([gxy, gwh], dim=1))  # absolute grid xywh
+            indices.append((b, a, gj, gi))
+            anch.append(anchors_grid[a])
 
         return tcls, tbox, indices, anch
 
     def forward(self, preds, targets):
+        """
+        preds: list of raw predictions
+            each p has shape [B, A, H, W, no]
+        targets: [M, 6] = [batch_idx, cls, x, y, w, h]
+        """
         device = preds[0].device
         targets = targets.to(device)
 
@@ -137,12 +151,13 @@ class YoloLoss(nn.Module):
         lcls = torch.zeros(1, device=device)
 
         for i, p in enumerate(preds):
-            # p: [B, A, H, W, no]
+            # objectness target map
             obj_target = torch.zeros_like(p[..., 4])  # [B, A, H, W]
 
             b, a, gj, gi = indices[i]
 
             if b.numel() > 0:
+                # positive predictions only
                 ps = p[b, a, gj, gi]  # [n_pos, no]
 
                 # decode positives in grid units
@@ -154,15 +169,19 @@ class YoloLoss(nn.Module):
                 pbox = torch.cat([pxy, pwh], dim=1)  # [n_pos, 4]
                 iou = bbox_iou_xywh(pbox, tbox[i])
 
+                # box loss
                 lbox += (1.0 - iou).mean()
 
+                # objectness target at positive locations
                 obj_target[b, a, gj, gi] = iou.detach().clamp(0).to(obj_target.dtype)
 
+                # class loss
                 if self.nc > 1:
                     t = torch.zeros_like(ps[:, 5:])
                     t[torch.arange(ps.shape[0], device=device), tcls[i]] = 1.0
                     lcls += self.bce_cls(ps[:, 5:], t)
 
+            # objectness loss on full feature map
             lobj += self.bce_obj(p[..., 4], obj_target)
 
         loss = self.box_gain * lbox + self.obj_gain * lobj + self.cls_gain * lcls
