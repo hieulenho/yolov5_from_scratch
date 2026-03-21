@@ -513,7 +513,7 @@ def build_dataloader(
     stride=32,
     augment=None,
     hyp=None,
-    cache_labels=True,
+    cache_labels=False,
     cache_images=False,
     single_cls=False,
     shuffle=None,
