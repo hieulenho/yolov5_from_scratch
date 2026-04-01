@@ -20,3 +20,4 @@ def main():
     torch.manual_seed(0)
 
     data_yaml = ROOT / "dataset" / "coco2017" / "dataset.yaml"
+    device = torch
