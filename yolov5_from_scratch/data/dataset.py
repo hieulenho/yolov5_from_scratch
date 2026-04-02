@@ -3,6 +3,7 @@ import yaml
 import time
 import random
 import pickle
+import hashlib
 import numpy as np
 import torch
 
@@ -222,7 +223,6 @@ def letterbox(
         borderType=cv2.BORDER_CONSTANT,
         value=color,
     )
-
     return image, ratio, (dw, dh)
 
 
@@ -231,12 +231,10 @@ def augment_hsv(image, hgain=0.015, sgain=0.7, vgain=0.4):
         return image
 
     r = np.random.uniform(-1, 1, 3) * np.array([hgain, sgain, vgain]) + 1.0
-
     hsv = cv2.cvtColor(image, cv2.COLOR_RGB2HSV).astype(np.float32)
     hsv[..., 0] = (hsv[..., 0] * r[0]) % 180.0
     hsv[..., 1] = np.clip(hsv[..., 1] * r[1], 0, 255)
     hsv[..., 2] = np.clip(hsv[..., 2] * r[2], 0, 255)
-
     image = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2RGB)
     return image
 
@@ -244,10 +242,12 @@ def augment_hsv(image, hgain=0.015, sgain=0.7, vgain=0.4):
 class YOLODataset(Dataset):
     """
     Output per sample:
-        img_tensor:  [3, H, W], float32 in [0,1]
-        targets:     [N, 5], float32, [cls, x, y, w, h] normalized
-        meta:        dict
+        img_tensor: [3, H, W], float32 in [0,1]
+        targets:    [N, 5], float32, [cls, x, y, w, h] normalized
+        meta:       dict
     """
+
+    CACHE_VERSION = 3
 
     def __init__(
         self,
@@ -262,9 +262,10 @@ class YOLODataset(Dataset):
         cache_images=False,
         single_cls=False,
         verbose=True,
+        rebuild_cache=False,
+        min_box_size=2.0,
     ):
         super().__init__()
-
         self.data_yaml = str(data_yaml)
         self.cfg = load_yaml(data_yaml)
         self.data_root = resolve_data_root(data_yaml, self.cfg["path"])
@@ -277,7 +278,8 @@ class YOLODataset(Dataset):
         self.cache_images = cache_images
         self.single_cls = single_cls
         self.verbose = verbose
-
+        self.rebuild_cache = rebuild_cache
+        self.min_box_size = float(min_box_size)
         self.hyp = hyp or {
             "hsv_h": 0.015,
             "hsv_s": 0.7,
@@ -295,7 +297,6 @@ class YOLODataset(Dataset):
             self.names = {i: n for i, n in enumerate(names)}
 
         self.num_classes = 1 if single_cls else len(self.names)
-
         self.image_dir = self.data_root / self.cfg[split]
         self.im_files = self._scan_images(self.image_dir)
 
@@ -303,7 +304,12 @@ class YOLODataset(Dataset):
             raise RuntimeError(f"No images found in {self.image_dir}")
 
         self.cache_path = self.data_root / f".{split}_labels.cache.pkl"
-        self.samples = self._load_or_build_cache() if cache_labels else self._build_cache(save=False)
+        self.cache_fingerprint = self._compute_cache_fingerprint(self.im_files)
+
+        if cache_labels:
+            self.samples = self._load_or_build_cache()
+        else:
+            self.samples = self._build_cache(save=False)
 
         self.imgs = [None] * len(self.samples) if cache_images else None
 
@@ -314,17 +320,45 @@ class YOLODataset(Dataset):
             print(f"[YOLODataset] classes={self.num_classes}")
             print(f"[YOLODataset] cache_labels={self.cache_labels}")
             print(f"[YOLODataset] cache_images={self.cache_images}")
+            print(f"[YOLODataset] rebuild_cache={self.rebuild_cache}")
+            print(f"[YOLODataset] min_box_size={self.min_box_size}")
             print(f"[YOLODataset] augment={self.augment}")
 
     def _scan_images(self, image_dir: Path):
         files = [p for p in image_dir.rglob("*") if p.suffix.lower() in IMG_EXTS]
         return sorted(files)
 
+    def _stat_token(self, path: Path) -> str:
+        if not path.exists():
+            return "missing"
+        st = path.stat()
+        return f"{st.st_mtime_ns}:{st.st_size}"
+
+    def _compute_cache_fingerprint(self, im_files):
+        h = hashlib.sha256()
+        h.update(str(self.data_root.resolve()).encode("utf-8"))
+        h.update(str(Path(self.data_yaml).resolve()).encode("utf-8"))
+        h.update(str(self.num_classes).encode("utf-8"))
+        h.update(str(self.single_cls).encode("utf-8"))
+        h.update(str(self.min_box_size).encode("utf-8"))
+
+        for im_file in im_files:
+            rel_im = im_file.relative_to(self.data_root).as_posix()
+            label_file = img2label_path(im_file, self.data_root)
+            rel_lb = label_file.relative_to(self.data_root).as_posix()
+            h.update(rel_im.encode("utf-8"))
+            h.update(self._stat_token(im_file).encode("utf-8"))
+            h.update(rel_lb.encode("utf-8"))
+            h.update(self._stat_token(label_file).encode("utf-8"))
+
+        return h.hexdigest()
+
     def _build_cache(self, save=True):
         t0 = time.time()
         samples = []
         bad_images = 0
         total_labels = 0
+        total_empty = 0
 
         for im_file in self.im_files:
             img = cv2.imread(str(im_file))
@@ -339,9 +373,9 @@ class YOLODataset(Dataset):
                 num_classes=None if self.single_cls else len(self.names),
                 single_cls=self.single_cls,
             )
-
+            if len(labels) == 0:
+                total_empty += 1
             total_labels += len(labels)
-
             samples.append(
                 {
                     "im_file": str(im_file),
@@ -353,11 +387,15 @@ class YOLODataset(Dataset):
 
         if save:
             payload = {
-                "version": 2,
+                "version": self.CACHE_VERSION,
                 "data_root": str(self.data_root),
                 "split": self.split,
                 "img_size": self.img_size,
                 "num_classes": self.num_classes,
+                "single_cls": self.single_cls,
+                "min_box_size": self.min_box_size,
+                "image_dir": str(self.image_dir),
+                "fingerprint": self.cache_fingerprint,
                 "samples": samples,
             }
             with open(self.cache_path, "wb") as f:
@@ -368,27 +406,43 @@ class YOLODataset(Dataset):
             print(f"[cache] built in {dt:.2f}s")
             print(f"[cache] usable images={len(samples)}")
             print(f"[cache] bad images={bad_images}")
+            print(f"[cache] images with 0 labels={total_empty}")
             print(f"[cache] total labels={total_labels}")
 
         return samples
 
     def _load_or_build_cache(self):
+        if self.rebuild_cache:
+            if self.verbose:
+                print("[cache] rebuild requested -> ignore existing cache")
+            return self._build_cache(save=True)
+
         if self.cache_path.exists():
             try:
                 with open(self.cache_path, "rb") as f:
                     payload = pickle.load(f)
 
-                if (
-                    payload.get("version") == 2
+                cache_ok = (
+                    payload.get("version") == self.CACHE_VERSION
                     and payload.get("data_root") == str(self.data_root)
                     and payload.get("split") == self.split
                     and payload.get("num_classes") == self.num_classes
-                ):
+                    and payload.get("single_cls") == self.single_cls
+                    and float(payload.get("min_box_size", -1.0)) == self.min_box_size
+                    and payload.get("image_dir") == str(self.image_dir)
+                    and payload.get("fingerprint") == self.cache_fingerprint
+                )
+
+                if cache_ok:
                     if self.verbose:
                         print(f"[cache] loaded {self.cache_path}")
                     return payload["samples"]
-            except Exception:
-                pass
+
+                if self.verbose:
+                    print("[cache] stale cache detected -> rebuilding")
+            except Exception as e:
+                if self.verbose:
+                    print(f"[cache] failed to read cache ({e}) -> rebuilding")
 
         return self._build_cache(save=True)
 
@@ -407,7 +461,6 @@ class YOLODataset(Dataset):
 
         if self.cache_images:
             self.imgs[index] = img.copy()
-
         return img
 
     def _load_labels(self, index):
@@ -415,10 +468,8 @@ class YOLODataset(Dataset):
 
     def __getitem__(self, index):
         sample = self.samples[index]
-
         img = self._load_image(index)
         h0, w0 = img.shape[:2]
-
         labels = self._load_labels(index)
 
         labels_xyxy = yolo_xywhn_to_xyxy(labels, w0, h0)
@@ -437,7 +488,7 @@ class YOLODataset(Dataset):
             labels_xyxy[:, [1, 3]] = labels_xyxy[:, [1, 3]] * ratio[0] + dw
             labels_xyxy[:, [2, 4]] = labels_xyxy[:, [2, 4]] * ratio[1] + dh
             labels_xyxy = clip_boxes_xyxy(labels_xyxy, w, h)
-            labels_xyxy = filter_invalid_boxes_xyxy(labels_xyxy, min_size=2.0)
+            labels_xyxy = filter_invalid_boxes_xyxy(labels_xyxy, min_size=self.min_box_size)
 
         if self.augment:
             img = augment_hsv(
@@ -446,7 +497,6 @@ class YOLODataset(Dataset):
                 sgain=self.hyp.get("hsv_s", 0.7),
                 vgain=self.hyp.get("hsv_v", 0.4),
             )
-
             if labels_xyxy.size > 0 and random.random() < self.hyp.get("fliplr", 0.5):
                 img = np.fliplr(img)
                 x1 = labels_xyxy[:, 1].copy()
@@ -455,7 +505,6 @@ class YOLODataset(Dataset):
                 labels_xyxy[:, 3] = w - x1
 
         targets = xyxy_to_yolo_xywhn(labels_xyxy, w, h)
-
         if targets.size > 0:
             targets[:, 1:] = np.clip(targets[:, 1:], 0.0, 1.0)
 
@@ -473,16 +522,16 @@ class YOLODataset(Dataset):
             "pad": (dw, dh),
             "num_classes": self.num_classes,
         }
-
         return img_tensor, targets_tensor, meta
+
 
 
 def yolo_collate_fn(batch):
     """
     Batch output:
-        imgs:    [B, 3, H, W]
+        imgs: [B, 3, H, W]
         targets: [M, 6] = [batch_idx, cls, x, y, w, h]
-        metas:   tuple(dict)
+        metas: tuple(dict)
     """
     imgs, targets, metas = zip(*batch)
     imgs = torch.stack(imgs, dim=0)
@@ -504,6 +553,7 @@ def yolo_collate_fn(batch):
     return imgs, new_targets, metas
 
 
+
 def build_dataloader(
     data_yaml,
     split="train",
@@ -521,10 +571,11 @@ def build_dataloader(
     persistent_workers=True,
     drop_last=False,
     verbose=True,
+    rebuild_cache=False,
+    min_box_size=2.0,
 ):
     if augment is None:
         augment = split == "train"
-
     if shuffle is None:
         shuffle = split == "train"
 
@@ -539,6 +590,8 @@ def build_dataloader(
         cache_images=cache_images,
         single_cls=single_cls,
         verbose=verbose,
+        rebuild_cache=rebuild_cache,
+        min_box_size=min_box_size,
     )
 
     loader_kwargs = dict(
@@ -551,7 +604,6 @@ def build_dataloader(
         drop_last=drop_last,
         persistent_workers=(persistent_workers and num_workers > 0),
     )
-
     if num_workers > 0:
         loader_kwargs["prefetch_factor"] = 2
 

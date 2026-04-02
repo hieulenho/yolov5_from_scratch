@@ -1,8 +1,9 @@
 import sys
 from pathlib import Path
 import time
-import torch
+import argparse
 
+import torch
 
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[1]
@@ -12,6 +13,7 @@ if str(ROOT) not in sys.path:
 from data.dataset import build_dataloader
 from models.yolo import YOLOv5FromScratch
 from loss.loss import YoloLoss
+
 
 
 def print_target_stats(targets: torch.Tensor):
@@ -33,22 +35,14 @@ def print_target_stats(targets: torch.Tensor):
         int(targets[:, 1].max().item()),
         flush=True,
     )
-    print(
-        "xywh min:",
-        targets[:, 2:6].min(dim=0).values,
-        flush=True,
-    )
-    print(
-        "xywh max:",
-        targets[:, 2:6].max(dim=0).values,
-        flush=True,
-    )
+    print("xywh min:", targets[:, 2:6].min(dim=0).values, flush=True)
+    print("xywh max:", targets[:, 2:6].max(dim=0).values, flush=True)
+
 
 
 def print_batch_breakdown(targets: torch.Tensor, metas):
     bs = len(metas)
     counts = [0] * bs
-
     if targets.numel() > 0:
         for i in range(bs):
             counts[i] = int((targets[:, 0] == i).sum().item())
@@ -61,6 +55,7 @@ def print_batch_breakdown(targets: torch.Tensor, metas):
             f"ratio={meta['ratio']} pad={meta['pad']} n={counts[i]}",
             flush=True,
         )
+
 
 
 def print_match_stats(indices):
@@ -82,19 +77,25 @@ def print_match_stats(indices):
                 flush=True,
             )
     print(f"total positives = {total_pos}", flush=True)
+    return total_pos
+
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--split", type=str, default="train", choices=["train", "val", "test"])
+    parser.add_argument("--img-size", type=int, default=640)
+    parser.add_argument("--batch-size", type=int, default=4)
+    parser.add_argument("--max-train-steps", type=int, default=20)
+    parser.add_argument("--max-scan-batches", type=int, default=200)
+    parser.add_argument("--min-box-size", type=float, default=2.0)
+    parser.add_argument("--rebuild-cache", action="store_true")
+    args = parser.parse_args()
+
     torch.manual_seed(0)
 
     data_yaml = ROOT / "datasets" / "coco2017" / "dataset.yaml"
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    split = "train"
-    img_size = 640
-    batch_size = 4
-    max_train_steps = 20
-    max_scan_batches = 200
 
     print(f"device = {device}", flush=True)
     print(f"data_yaml = {data_yaml}", flush=True)
@@ -103,9 +104,9 @@ def main():
     print("[1] before build_dataloader", flush=True)
     dataset, loader = build_dataloader(
         data_yaml=str(data_yaml),
-        split=split,
-        img_size=img_size,
-        batch_size=batch_size,
+        split=args.split,
+        img_size=args.img_size,
+        batch_size=args.batch_size,
         num_workers=0,
         cache_labels=True,
         cache_images=False,
@@ -113,6 +114,8 @@ def main():
         shuffle=False,
         persistent_workers=False,
         verbose=True,
+        rebuild_cache=args.rebuild_cache,
+        min_box_size=args.min_box_size,
     )
     print(f"[2] after build_dataloader | dt={time.time() - t0:.2f}s", flush=True)
     print(f"dataset len = {len(dataset)}", flush=True)
@@ -132,14 +135,14 @@ def main():
 
     for batch_idx, (imgs, targets, metas) in enumerate(loader):
         scanned_batches += 1
-        print(f"\n========== batch {batch_idx} ==========", flush=True)
+        print(f"\n========== batch {batch_idx} =========={''}", flush=True)
         print(f"imgs.shape = {tuple(imgs.shape)}", flush=True)
         print_target_stats(targets)
         print_batch_breakdown(targets, metas)
 
         if targets.shape[0] == 0:
             print("skip empty batch", flush=True)
-            if scanned_batches >= max_scan_batches:
+            if scanned_batches >= args.max_scan_batches:
                 print("Reached max_scan_batches while only seeing empty batches.", flush=True)
                 break
             continue
@@ -154,11 +157,11 @@ def main():
             print(f"outputs[{i}].shape = {tuple(out.shape)}", flush=True)
 
         tcls, tbox, indices, anch = criterion.build_targets(outputs, targets)
-        print_match_stats(indices)
+        total_pos = print_match_stats(indices)
 
-        if sum(x[0].numel() for x in indices) == 0:
+        if total_pos == 0:
             print("All scales have 0 positives -> skip backward for this batch", flush=True)
-            if scanned_batches >= max_scan_batches:
+            if scanned_batches >= args.max_scan_batches:
                 print("Reached max_scan_batches without finding a positive batch.", flush=True)
                 break
             continue
@@ -189,9 +192,9 @@ def main():
         trained_steps += 1
         print(f"trained_steps = {trained_steps}", flush=True)
 
-        if trained_steps >= max_train_steps:
+        if trained_steps >= args.max_train_steps:
             break
-        if scanned_batches >= max_scan_batches:
+        if scanned_batches >= args.max_scan_batches:
             break
 
     print("train_one_step: OK", flush=True)
