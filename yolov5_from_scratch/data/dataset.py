@@ -43,6 +43,31 @@ def resolve_data_root(data_yaml, cfg_path_value):
     return candidates[0]
 
 
+def img2label_path(img_path, data_root):
+    """Map data_root/images/.../image.ext to data_root/labels/.../image.txt."""
+    img_path = Path(img_path).resolve()
+    data_root = Path(data_root).resolve()
+
+    try:
+        rel = img_path.relative_to(data_root)
+        parts = list(rel.parts)
+        if parts and parts[0].lower() == "images":
+            parts[0] = "labels"
+            if len(parts) >= 4 and parts[1].lower() == parts[2].lower():
+                del parts[2]
+            return data_root.joinpath(*parts).with_suffix(".txt")
+    except ValueError:
+        pass
+
+    parts = list(img_path.parts)
+    for i, part in enumerate(parts):
+        if part.lower() == "images":
+            parts[i] = "labels"
+            return Path(*parts).with_suffix(".txt")
+
+    return data_root / "labels" / img_path.with_suffix(".txt").name
+
+
 def _split_label_line(line: str):
     line = line.strip().replace("\ufeff", "")
     if not line:

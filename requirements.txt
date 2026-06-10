@@ -1,0 +1,6 @@
+numpy>=2.0
+opencv-python>=4.10
+PyYAML>=6.0
+pycocotools>=2.0.7
+torch>=2.5
+torchvision>=0.20
