@@ -1,0 +1,11 @@
+path: ../datasets/traffic5
+train: images/train
+val: images/val
+
+nc: 5
+names:
+  - person
+  - car
+  - motorcycle
+  - bus
+  - truck

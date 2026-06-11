@@ -117,8 +117,113 @@ python yolov5_from_scratch/utils/predict.py `
 ## Han che cua tracker
 
 Tracker hien tai ghep box bang IoU va class. No nhe, khong can dependency ngoai,
-nhung co the doi ID khi doi tuong bi che khuat, di nhanh hoac roi khoi frame.
-Khi detection da tot hon, nen thay bang ByteTrack de co ID on dinh hon.
+va co them center-distance fallback khi box khong con overlap. No van co the doi
+ID khi doi tuong bi che khuat lau hoac khi nhieu nguoi dung sat nhau. Khi
+detection da tot hon, nen thay bang ByteTrack de co ID on dinh hon.
+
+## Cau hinh da kiem tra voi hai video thuc te
+
+Video ngang 4K, chi theo doi xe:
+
+```powershell
+python yolov5_from_scratch/utils/predict.py `
+  --source D:\videos\traffic.mp4 `
+  --classes car bus truck `
+  --img-size 960 `
+  --conf 0.05 `
+  --track-conf 0.12 `
+  --display-conf 0.12 `
+  --count-conf 0.18 `
+  --min-track-hits 8 `
+  --track-center-distance 1.0 `
+  --roi 0.08 0.12 0.92 1.0 `
+  --line-position 0.65 `
+  --count-directions top_to_bottom `
+  --output-width 960 `
+  --no-draw-roi `
+  --name traffic_improved
+```
+
+Video doc, canh dong nguoi va xe may:
+
+```powershell
+python yolov5_from_scratch/utils/predict.py `
+  --source D:\videos\traffic2.mp4 `
+  --classes person car motorcycle bus truck `
+  --img-size 960 `
+  --conf 0.05 `
+  --track-conf 0.12 `
+  --display-conf 0.12 `
+  --count-conf 0.18 `
+  --min-track-hits 8 `
+  --track-center-distance 0.8 `
+  --roi 0.0 0.05 1.0 0.98 `
+  --line-position 0.58 `
+  --count-directions top_to_bottom `
+  --output-width 720 `
+  --no-draw-roi `
+  --name traffic2_improved
+```
+
+`--roi X1 Y1 X2 Y2` dung toa do chuan hoa theo frame goc. Model chi suy luan
+ben trong ROI, sau do box duoc dua ve toa do frame goc. `detections.csv` luon
+giu toa do frame goc, ke ca khi `--output-width` lam video output nho hon.
+
+Ba nguong confidence co vai tro rieng:
+
+- `--conf`: detection toi thieu duoc luu vao CSV.
+- `--track-conf`: detection toi thieu duoc cap track ID.
+- `--display-conf`: detection toi thieu duoc ve len video.
+- `--count-conf`: confidence trung binh toi thieu cua ca track de duoc dem.
+
+## Phan tich mot run
+
+```powershell
+python yolov5_from_scratch/tools/analyze_detection_run.py `
+  yolov5_from_scratch/runs/detect/traffic_improved
+```
+
+Cong cu in tong detection, so track, do dai track, confidence va crossing.
+Them `--json` neu can output co cau truc.
+
+Ket qua sau khi cai tien pipeline:
+
+- `traffic.mp4`: 1.073 track xuong 124; median track tu 9 len 40 frame.
+- `traffic2.mp4`: 632 track xuong 190; median track tu 12 len 41 frame.
+- Video output 4K giam tu 508 MB xuong 88 MB.
+- Video output doc giam tu 299 MB xuong 138 MB.
+
+So dem cua video doc van la `person`, khong phai `motorcycle`, vi checkpoint
+hien tai thuong nhan nguoi lai xe may thanh nguoi. Can fine-tune de sua loi nay.
+
+## Tao bo frame de gan nhan
+
+```powershell
+python yolov5_from_scratch/tools/extract_video_frames.py `
+  --source D:\videos\traffic.mp4 D:\videos\traffic2.mp4 `
+  --output yolov5_from_scratch/datasets/traffic_pilot `
+  --frames-per-video 120 `
+  --max-width 1280 `
+  --jpeg-quality 90
+```
+
+Bo pilot hien tai da duoc tao tai:
+
+```text
+yolov5_from_scratch/datasets/traffic_pilot/
+├── classes.txt
+├── frames.csv
+└── images/
+    └── unlabeled/
+```
+
+Co 240 frame, tong dung luong khoang 92 MB. `frames.csv` luu video nguon,
+frame index, timestamp va kich thuoc goc.
+
+Quy tac gan nhan nam trong
+[TRAFFIC_ANNOTATION_GUIDE.md](TRAFFIC_ANNOTATION_GUIDE.md). Cau hinh dataset
+5 lop sau khi chia train/val nam trong
+`yolov5_from_scratch/configs/traffic5.yaml`.
 
 ## Buoc fine-tune tiep theo
 
