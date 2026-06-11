@@ -1,0 +1,26 @@
+source: D:/videos/traffic2.mp4
+weights: artifacts/checkpoints/traffic5/best.pt
+data: yolov5_from_scratch/configs/traffic5.yaml
+classes:
+  - motorcycle
+img_size: 960
+conf: 0.10
+track_conf: 0.40
+display_conf: 0.25
+count_conf: 0.45
+min_track_hits: 10
+track_center_distance: 0.8
+count_line: horizontal
+line_position: 0.58
+count_directions:
+  - top_to_bottom
+roi:
+  - 0.0
+  - 0.05
+  - 1.0
+  - 0.98
+output_width: 720
+draw_roi: false
+project: artifacts/predictions
+name: motorcycle_counter
+exist_ok: true

@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "yolov5-from-scratch-camera"
+version = "0.2.0"
+description = "YOLOv5-from-scratch training and reusable camera inference pipeline"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy>=2.0",
+  "opencv-python>=4.10",
+  "PyYAML>=6.0",
+  "pycocotools>=2.0.7",
+  "torch>=2.5",
+  "torchvision>=0.20",
+]
+
+[project.scripts]
+yolo-predict = "yolov5_from_scratch.cli.predict:main"
+yolo-train = "yolov5_from_scratch.training.train:main"
+yolo-validate = "yolov5_from_scratch.training.validate:main"
+
+[tool.setuptools.packages.find]
+include = ["yolov5_from_scratch*"]
+
+[tool.setuptools.package-data]
+yolov5_from_scratch = ["configs/**/*.yaml"]

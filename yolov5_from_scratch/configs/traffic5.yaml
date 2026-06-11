@@ -1,4 +1,4 @@
-path: ../datasets/traffic5
+path: ../../datasets/traffic5
 train: images/train
 val: images/val
 

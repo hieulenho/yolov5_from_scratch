@@ -1,9 +1,9 @@
-# Dataset / data nặng
+# Dataset / data nang
 datasets/
-coco 2017/
 data/raw/
 
-# Output train / weight
+# Generated artifacts
+artifacts/
 runs/
 checkpoints/
 *.pt

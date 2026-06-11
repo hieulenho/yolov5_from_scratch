@@ -1,0 +1,15 @@
+source: 0
+weights: artifacts/checkpoints/coco80/best.pt
+data: datasets/coco2017/dataset.yaml
+classes: null
+img_size: 640
+conf: 0.05
+track_conf: 0.10
+display_conf: 0.10
+count_line: none
+output_width: 1280
+view: true
+save_media: false
+save_csv: false
+project: artifacts/predictions
+name: camera
