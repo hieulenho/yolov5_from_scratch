@@ -225,18 +225,74 @@ Quy tac gan nhan nam trong
 5 lop sau khi chia train/val nam trong
 `yolov5_from_scratch/configs/traffic5.yaml`.
 
-## Buoc fine-tune tiep theo
+## Tao pre-label 5 lop
 
-1. Dung `predict.py` tren video giao thong thuc te de tim failure case.
-2. Trich va gan nhan 1.000-3.000 frame cho 5-6 lop giao thong.
-3. Bo sung che do load `best.pt` theo weights-only, khong resume optimizer cu.
-4. Sua loss/target assignment va tich hop COCO mAP vao validation.
-5. Fine-tune voi learning rate nho va chon checkpoint theo mAP.
-6. Sau khi detection tot, thay tracker IoU bang ByteTrack va export ONNX.
+Dung Faster R-CNN pretrained cua TorchVision de tao nhan ban dau:
+
+```powershell
+cd yolov5_from_scratch
+python tools/prelabel_traffic_dataset.py `
+  --source datasets/traffic_pilot `
+  --output datasets/traffic5 `
+  --conf 0.60 `
+  --vehicle-nms-iou 0.70 `
+  --val-fraction 0.20 `
+  --device cuda
+```
+
+Dataset hien tai co:
+
+- 192 anh train, 48 anh validation.
+- 6.853 box: 4.677 person, 1.210 car, 351 motorcycle, 245 bus, 370 truck.
+- Validation la mot doan thoi gian lien tuc o giua moi video.
+- `prelabels.csv` luu confidence va toa do goc de audit.
+
+Day la pre-label, chua phai ground truth. Can uu tien sua cac box `bus`/`truck`,
+box bi bo sot va rider/motorcycle truoc khi dung ket qua cho bao cao chinh thuc.
+
+Kiem tra cau truc:
+
+```powershell
+python tools/check_dataset.py `
+  --data configs/traffic5.yaml `
+  --strict-missing-labels
+```
+
+## Fine-tune tu best.pt
+
+`--weights` chi nap trong so va tao optimizer moi. Detection head 80 lop duoc
+anh xa theo ten class sang head 5 lop. Khong dung `--resume` khi doi tu COCO
+80 lop sang traffic 5 lop.
+
+```powershell
+python utils/train.py `
+  --data configs/traffic5.yaml `
+  --weights runs/train/exp/weights/best.pt `
+  --epochs 50 `
+  --img-size 640 `
+  --batch-size 8 `
+  --workers 4 `
+  --device cuda `
+  --amp `
+  --optimizer AdamW `
+  --lr 0.001 `
+  --val `
+  --project runs/train `
+  --name traffic5_finetune
+```
+
+Sau khi fine-tune:
+
+1. Chay checkpoint moi tren hai video goc.
+2. So sanh `motorcycle`, false positive va do on dinh tracking.
+3. Sua thu cong pre-label sai, them failure case va train vong tiep theo.
+4. Khi detection du tot, thay tracker IoU bang ByteTrack va export ONNX.
 
 ## Kiem thu nhanh
 
 ```powershell
 python yolov5_from_scratch/tools/test_model.py
 python yolov5_from_scratch/tools/test_inference.py
+python yolov5_from_scratch/tools/test_prelabel_traffic.py
+python yolov5_from_scratch/tools/test_train_transfer.py
 ```

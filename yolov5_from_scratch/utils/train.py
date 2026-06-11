@@ -93,6 +93,12 @@ def parse_args():
 
     parser.add_argument("--project", type=str, default=str(ROOT / "runs" / "train"))
     parser.add_argument("--name", type=str, default="exp")
+    parser.add_argument(
+        "--weights",
+        type=str,
+        default="",
+        help="initialize model weights without restoring optimizer or epoch",
+    )
     parser.add_argument("--resume", type=str, default="")
     parser.add_argument("--save-period", type=int, default=10)
     return parser.parse_args()
@@ -121,6 +127,15 @@ def get_num_classes(data_cfg, single_cls=False):
     if "nc" in data_cfg:
         return int(data_cfg["nc"])
     raise ValueError("Cannot infer number of classes from dataset.yaml")
+
+
+def get_class_names(data_cfg):
+    names = data_cfg.get("names")
+    if isinstance(names, dict):
+        return [names[key] for key in sorted(names, key=lambda value: int(value))]
+    if isinstance(names, (list, tuple)):
+        return list(names)
+    return []
 
 
 def make_optimizer(args, model):
@@ -180,6 +195,87 @@ def load_checkpoint(resume_path, model, optimizer=None, scheduler=None, scaler=N
     return start_epoch, best_val_loss
 
 
+def get_checkpoint_class_names(checkpoint):
+    checkpoint_args = checkpoint.get("args", {})
+    source_data = checkpoint_args.get("data") if isinstance(checkpoint_args, dict) else None
+    if not source_data:
+        return []
+    source_data_path = Path(source_data)
+    if not source_data_path.is_file():
+        return []
+    return get_class_names(load_data_yaml(source_data_path))
+
+
+def remap_detect_parameter(source, target, source_names, target_names):
+    if source.ndim not in (1, 4) or target.ndim != source.ndim:
+        return None
+    num_anchors = 3
+    if source.shape[0] % num_anchors or target.shape[0] % num_anchors:
+        return None
+
+    source_no = source.shape[0] // num_anchors
+    target_no = target.shape[0] // num_anchors
+    if source_no != len(source_names) + 5 or target_no != len(target_names) + 5:
+        return None
+    if source.shape[1:] != target.shape[1:]:
+        return None
+
+    source_view = source.view(num_anchors, source_no, *source.shape[1:])
+    target_view = target.clone().view(num_anchors, target_no, *target.shape[1:])
+    target_view[:, :5] = source_view[:, :5]
+
+    source_name_to_id = {
+        str(name).strip().lower(): index for index, name in enumerate(source_names)
+    }
+    for target_id, target_name in enumerate(target_names):
+        source_id = source_name_to_id.get(str(target_name).strip().lower())
+        if source_id is not None:
+            target_view[:, 5 + target_id] = source_view[:, 5 + source_id]
+    return target_view.view_as(target)
+
+
+def load_pretrained_weights(weights_path, model, target_names, device="cpu"):
+    checkpoint = torch.load(weights_path, map_location=device, weights_only=False)
+    source_state = checkpoint.get("model", checkpoint)
+    target_state = model.state_dict()
+    source_names = get_checkpoint_class_names(checkpoint)
+    transfer_state = {}
+    remapped_head = []
+    skipped = []
+
+    for key, source_value in source_state.items():
+        target_value = target_state.get(key)
+        if target_value is None:
+            skipped.append(key)
+            continue
+        if source_value.shape == target_value.shape:
+            transfer_state[key] = source_value
+            continue
+        if key.startswith("head.m.") and source_names and target_names:
+            remapped = remap_detect_parameter(
+                source_value,
+                target_value,
+                source_names,
+                target_names,
+            )
+            if remapped is not None:
+                transfer_state[key] = remapped
+                remapped_head.append(key)
+                continue
+        skipped.append(key)
+
+    missing, unexpected = model.load_state_dict(transfer_state, strict=False)
+    return {
+        "loaded": len(transfer_state),
+        "source_total": len(source_state),
+        "source_names": source_names,
+        "remapped_head": remapped_head,
+        "skipped": skipped,
+        "missing": list(missing),
+        "unexpected": list(unexpected),
+    }
+
+
 def train_one_epoch(model, criterion, optimizer, loader, device, epoch, args, scaler=None):
     model.train()
     meters = LossMeters()
@@ -201,7 +297,10 @@ def train_one_epoch(model, criterion, optimizer, loader, device, epoch, args, sc
                     pg["momentum"] = 0.8 + (args.momentum - 0.8) * warm
 
         optimizer.zero_grad(set_to_none=True)
-        with torch.cuda.amp.autocast(enabled=autocast_enabled):
+        with torch.amp.autocast(
+            device_type=device.type,
+            enabled=autocast_enabled,
+        ):
             outputs = model(imgs)
             loss, loss_items = criterion(outputs, targets)
 
@@ -253,7 +352,10 @@ def validate(model, criterion, loader, device, epoch, args):
         imgs = imgs.to(device, non_blocking=True)
         targets = targets.to(device, non_blocking=True)
 
-        with torch.cuda.amp.autocast(enabled=autocast_enabled):
+        with torch.amp.autocast(
+            device_type=device.type,
+            enabled=autocast_enabled,
+        ):
             outputs = model(imgs)
             _, loss_items = criterion(outputs, targets)
 
@@ -278,6 +380,8 @@ def validate(model, criterion, loader, device, epoch, args):
 
 def main():
     args = parse_args()
+    if args.resume and args.weights:
+        raise ValueError("--resume and --weights cannot be used together")
     set_seed(args.seed)
     torch.backends.cudnn.benchmark = True
 
@@ -334,10 +438,33 @@ def main():
         )
 
     model = YOLOv5FromScratch(nc=nc).to(device)
+    if args.weights:
+        transfer = load_pretrained_weights(
+            args.weights,
+            model=model,
+            target_names=get_class_names(data_cfg),
+            device=device,
+        )
+        print(
+            f"initialized from {args.weights} | "
+            f"loaded={transfer['loaded']}/{transfer['source_total']} | "
+            f"remapped_head={len(transfer['remapped_head'])} | "
+            f"skipped={len(transfer['skipped'])}",
+            flush=True,
+        )
+        if not transfer["source_names"]:
+            print(
+                "warning: source class names were unavailable; "
+                "detection head class channels were not transferred",
+                flush=True,
+            )
     criterion = YoloLoss(model.head, nc=nc, anchor_t=args.anchor_t).to(device)
     optimizer = make_optimizer(args, model)
     scheduler = make_scheduler(args, optimizer)
-    scaler = torch.cuda.amp.GradScaler(enabled=bool(args.amp and device.type == "cuda"))
+    scaler = torch.amp.GradScaler(
+        device.type,
+        enabled=bool(args.amp and device.type == "cuda"),
+    )
 
     start_epoch = 0
     best_val_loss = float("inf")
