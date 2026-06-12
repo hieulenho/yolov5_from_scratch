@@ -175,7 +175,7 @@ def main():
         ckpt_meta = load_checkpoint_model(model, args.weights, device)
         print(f"loaded weights from: {args.weights}", flush=True)
         if isinstance(ckpt_meta, dict) and "epoch" in ckpt_meta:
-            print(f"checkpoint epoch = {ckpt_meta['epoch']}", flush=True)
+            print(f"checkpoint epoch = {int(ckpt_meta['epoch']) + 1}", flush=True)
 
     results = validate(model, criterion, loader, device, args)
 

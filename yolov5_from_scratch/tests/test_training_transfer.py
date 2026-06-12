@@ -1,6 +1,13 @@
+import json
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
 import torch
 
-from yolov5_from_scratch.training.train import remap_detect_parameter
+from yolov5_from_scratch.training.train import (
+    load_resume_history,
+    remap_detect_parameter,
+)
 
 
 def test_detect_head_class_remap():
@@ -37,6 +44,24 @@ def test_detect_head_class_remap():
         )
 
 
+def test_load_flattened_resume_history():
+    with TemporaryDirectory() as temp_dir:
+        checkpoint_dir = Path(temp_dir) / "checkpoint"
+        checkpoint_dir.mkdir()
+        history = [{"epoch": 1}, {"epoch": 2}, {"epoch": 3}]
+        (checkpoint_dir / "history.json").write_text(
+            json.dumps(history),
+            encoding="utf-8",
+        )
+        restored = load_resume_history(
+            checkpoint_dir / "last.pt",
+            Path(temp_dir) / "new_run",
+            completed_epochs=2,
+        )
+        assert restored == history[:2]
+
+
 if __name__ == "__main__":
     test_detect_head_class_remap()
+    test_load_flattened_resume_history()
     print("test_training_transfer: OK")

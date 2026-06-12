@@ -1,6 +1,10 @@
 import torch
 
-from yolov5_from_scratch.cli.predict import resolve_class_filter
+from yolov5_from_scratch.cli.predict import (
+    build_parser,
+    resolve_class_filter,
+    validate_args,
+)
 from yolov5_from_scratch.runtime.counting import LineCounter
 from yolov5_from_scratch.runtime.detector import Detection, scale_boxes
 from yolov5_from_scratch.runtime.geometry import (
@@ -9,7 +13,11 @@ from yolov5_from_scratch.runtime.geometry import (
     roi_pixel_bounds,
     validate_roi,
 )
-from yolov5_from_scratch.runtime.media import iter_sources, output_name
+from yolov5_from_scratch.runtime.media import (
+    iter_sources,
+    output_name,
+    source_label,
+)
 from yolov5_from_scratch.runtime.rendering import detections_for_display
 from yolov5_from_scratch.runtime.tracking import IoUTracker, update_tracks
 
@@ -30,6 +38,17 @@ def test_class_filter():
     names = ["person", "car", "dog"]
     assert resolve_class_filter(["car", "0"], names) == {0, 1}
     assert resolve_class_filter(None, names) is None
+
+
+def test_runtime_argument_validation():
+    parser = build_parser()
+    invalid = parser.parse_args(["--source", "0", "--iou", "1.5"])
+    try:
+        validate_args(invalid)
+    except ValueError as error:
+        assert "--iou" in str(error)
+    else:
+        raise AssertionError("Invalid IoU threshold was accepted")
 
 
 def test_roi_and_output_geometry():
@@ -99,9 +118,10 @@ def test_display_filter():
 
 
 def test_stream_source():
-    source = "rtsp://camera.local/stream"
+    source = "rtsp://user:secret@camera.local:554/stream"
     assert iter_sources(source) == [source]
     assert output_name(source, ".mp4") == "stream.mp4"
+    assert source_label(source) == "rtsp://camera.local:554/stream"
 
 
 def test_tracker_and_counter():
@@ -158,6 +178,7 @@ def test_tracker_and_counter():
 def main():
     test_scale_boxes()
     test_class_filter()
+    test_runtime_argument_validation()
     test_roi_and_output_geometry()
     test_tracking_threshold_and_center_fallback()
     test_display_filter()

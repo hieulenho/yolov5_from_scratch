@@ -12,7 +12,13 @@ from .geometry import (
     resize_for_output,
     scale_detections,
 )
-from .media import IMAGE_EXTENSIONS, iter_sources, open_capture, output_name
+from .media import (
+    IMAGE_EXTENSIONS,
+    iter_sources,
+    open_capture,
+    output_name,
+    source_label,
+)
 from .rendering import (
     detections_for_display,
     draw_detections,
@@ -47,7 +53,7 @@ class NullWriter:
 def _write_detection(csv_writer, source, frame_index, timestamp, detection, track_id, direction=""):
     csv_writer.writerow(
         [
-            str(source),
+            source_label(source),
             frame_index,
             f"{timestamp:.3f}",
             track_id if track_id is not None else "",
@@ -82,6 +88,7 @@ def _render_frame(frame, detections, track_ids, line_counter, inference_ms, args
 
 
 def process_image(source, predictor, tracker, line_counter, save_dir, csv_writer, args):
+    label = source_label(source)
     image = cv2.imread(str(source))
     if image is None:
         raise RuntimeError(f"Could not read image: {source}")
@@ -97,20 +104,26 @@ def process_image(source, predictor, tracker, line_counter, save_dir, csv_writer
     for detection, track_id in zip(detections, track_ids):
         _write_detection(csv_writer, source, 0, 0.0, detection, track_id)
 
-    rendered = _render_frame(
-        image,
-        detections,
-        track_ids,
-        line_counter,
-        inference_ms,
-        args,
-    )
+    rendered = None
+    if args.save_media or args.view:
+        rendered = _render_frame(
+            image,
+            detections,
+            track_ids,
+            line_counter,
+            inference_ms,
+            args,
+        )
     output_path = None
     if args.save_media:
         output_path = save_dir / output_name(source, Path(source).suffix.lower())
         cv2.imwrite(str(output_path), rendered)
+    if args.view:
+        cv2.imshow("YOLO image application", rendered)
+        cv2.waitKey(0)
+        cv2.destroyWindow("YOLO image application")
     print(
-        f"image: {source} | detections={len(detections)} "
+        f"image: {label} | detections={len(detections)} "
         f"| inference={inference_ms:.1f} ms "
         f"| saved={output_path or 'disabled'}",
         flush=True,
@@ -127,6 +140,7 @@ def process_video(
     summary_writer,
     args,
 ):
+    label = source_label(source)
     capture = open_capture(source)
     fps = float(capture.get(cv2.CAP_PROP_FPS))
     if not np.isfinite(fps) or fps <= 0:
@@ -135,7 +149,7 @@ def process_video(
     ok, first_frame = capture.read()
     if not ok or first_frame is None:
         capture.release()
-        raise RuntimeError(f"Could not read the first frame from: {source}")
+        raise RuntimeError(f"Could not read the first frame from: {label}")
     height, width = first_frame.shape[:2]
     output_width, output_height = output_dimensions(width, height, args.output_width)
 
@@ -200,14 +214,16 @@ def process_video(
                     direction,
                 )
 
-            rendered = _render_frame(
-                frame,
-                detections,
-                track_ids,
-                line_counter,
-                inference_ms,
-                args,
-            )
+            rendered = None
+            if args.save_media or args.view:
+                rendered = _render_frame(
+                    frame,
+                    detections,
+                    track_ids,
+                    line_counter,
+                    inference_ms,
+                    args,
+                )
             if writer is not None:
                 writer.write(rendered)
 
@@ -220,7 +236,7 @@ def process_video(
             if args.max_frames > 0 and frame_index >= args.max_frames:
                 break
             if frame_index % 100 == 0:
-                print(f"video: {source} | processed frames={frame_index}", flush=True)
+                print(f"video: {label} | processed frames={frame_index}", flush=True)
     finally:
         capture.release()
         if writer is not None:
@@ -230,9 +246,9 @@ def process_video(
 
     mean_ms = float(np.mean(inference_times)) if inference_times else 0.0
     for (class_name, direction), count in sorted(line_counter.counts.items()):
-        summary_writer.writerow([str(source), class_name, direction, count])
+        summary_writer.writerow([label, class_name, direction, count])
     print(
-        f"video: {source} | frames={frame_index} | mean inference={mean_ms:.1f} ms "
+        f"video: {label} | frames={frame_index} | mean inference={mean_ms:.1f} ms "
         f"| tracks={tracker.next_id - 1} | counts={dict(line_counter.counts)} "
         f"| saved={output_path or 'disabled'}",
         flush=True,

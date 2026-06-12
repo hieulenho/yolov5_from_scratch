@@ -161,8 +161,33 @@ python train.py `
   --name traffic5_next
 ```
 
-`--weights` khởi tạo trọng số và optimizer mới. `--resume` chỉ dùng khi tiếp
-tục đúng kiến trúc, số class và optimizer của một run trước.
+`--weights` khởi tạo từ trọng số đã train nhưng tạo optimizer và lịch learning
+rate mới. `--resume` chỉ dùng để khôi phục đúng một run bị gián đoạn, với cùng
+kiến trúc, số class, optimizer và tổng số epoch đã định trước.
+
+Checkpoint traffic5 đã hoàn tất 50 epoch. Cách khuyến nghị để train thêm là mở
+một giai đoạn mới 30 epoch từ `last.pt`:
+
+```powershell
+python train.py `
+  --data yolov5_from_scratch/configs/traffic5.yaml `
+  --weights artifacts/checkpoints/traffic5/last.pt `
+  --epochs 30 `
+  --img-size 640 `
+  --batch-size 8 `
+  --workers 4 `
+  --device cuda `
+  --amp `
+  --optimizer AdamW `
+  --lr 0.001 `
+  --val `
+  --project artifacts/training `
+  --name traffic5_resume
+```
+
+Không dùng `--resume ... --epochs 80` cho trường hợp này vì learning-rate
+scheduler của run cũ đã đi hết chu kỳ 50 epoch. Khi một run đang dở thực sự bị
+ngắt, `--resume` sẽ khôi phục model, optimizer, scheduler, AMP scaler và lịch sử.
 
 ## Công cụ dataset
 
@@ -240,6 +265,10 @@ python -m yolov5_from_scratch.tools.maintenance.clean_artifacts `
   được kiểm duyệt thủ công.
 - Tracker hiện tại dựa trên IoU và khoảng cách tâm; camera triển khai lâu dài
   nên nâng cấp sang ByteTrack.
+- Luồng RTSP hiện chưa tự kết nối lại khi camera hoặc mạng bị ngắt.
+- Checkpoint `coco80` hỗ trợ đủ 80 class về mặt kiến trúc nhưng độ chính xác
+  hiện còn thấp; cần train/đánh giá lại trước khi xem là model đa vật thể dùng
+  trong sản phẩm.
 - Chọn checkpoint hiện vẫn dựa trên validation loss; bước tiếp theo nên tích
   hợp mAP50-95 vào quá trình train.
 - Trước khi dùng số đếm trong thực tế, cần kiểm tra trên nhiều góc camera,

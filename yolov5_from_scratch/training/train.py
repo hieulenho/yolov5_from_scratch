@@ -149,6 +149,21 @@ def load_checkpoint(resume_path, model, optimizer=None, scheduler=None, scaler=N
     )
     model.load_state_dict(ckpt["model"], strict=True)
     if optimizer is not None and ckpt.get("optimizer") is not None:
+        checkpoint_args = ckpt.get("args", {})
+        checkpoint_optimizer = (
+            checkpoint_args.get("optimizer")
+            if isinstance(checkpoint_args, dict)
+            else None
+        )
+        current_optimizer = optimizer.__class__.__name__
+        if (
+            checkpoint_optimizer
+            and checkpoint_optimizer.lower() != current_optimizer.lower()
+        ):
+            raise ValueError(
+                "Optimizer mismatch while resuming: checkpoint uses "
+                f"{checkpoint_optimizer}, but --optimizer is {current_optimizer}"
+            )
         optimizer.load_state_dict(ckpt["optimizer"])
     if scheduler is not None and ckpt.get("scheduler") is not None:
         scheduler.load_state_dict(ckpt["scheduler"])
@@ -157,6 +172,35 @@ def load_checkpoint(resume_path, model, optimizer=None, scheduler=None, scaler=N
     start_epoch = int(ckpt.get("epoch", -1)) + 1
     best_val_loss = float(ckpt.get("best_val_loss", float("inf")))
     return start_epoch, best_val_loss
+
+
+def load_resume_history(resume_path, save_dir, completed_epochs):
+    resume_path = Path(resume_path)
+    candidates = [
+        Path(save_dir) / "history.json",
+        resume_path.parent / "history.json",
+        resume_path.parent.parent / "history.json",
+    ]
+    seen = set()
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if resolved in seen or not candidate.is_file():
+            continue
+        seen.add(resolved)
+        try:
+            with candidate.open("r", encoding="utf-8") as handle:
+                history = json.load(handle)
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(history, list):
+            continue
+        return [
+            row
+            for row in history
+            if isinstance(row, dict)
+            and int(row.get("epoch", 0)) <= completed_epochs
+        ]
+    return []
 
 
 def get_checkpoint_class_names(checkpoint):
@@ -447,9 +491,18 @@ def main():
             scaler=scaler,
             device=device,
         )
-        print(f"resumed from {args.resume} at epoch {start_epoch}", flush=True)
+        print(
+            f"resumed from {args.resume} | next epoch = {start_epoch + 1}",
+            flush=True,
+        )
 
-    history = []
+    history = (
+        load_resume_history(args.resume, save_dir, start_epoch)
+        if args.resume
+        else []
+    )
+    if history:
+        print(f"restored {len(history)} history rows", flush=True)
     train_start = time.time()
 
     for epoch in range(start_epoch, args.epochs):
@@ -487,6 +540,11 @@ def main():
         with open(save_dir / "history.json", "w", encoding="utf-8") as f:
             json.dump(history, f, indent=2)
 
+        is_new_best = False
+        if val_stats is not None and val_stats["loss"] < best_val_loss:
+            best_val_loss = val_stats["loss"]
+            is_new_best = True
+
         last_path = weights_dir / "last.pt"
         save_checkpoint(last_path, epoch, model, optimizer, scheduler, scaler, best_val_loss, args)
 
@@ -494,8 +552,7 @@ def main():
         if should_save_epoch:
             save_checkpoint(weights_dir / f"epoch_{epoch + 1:03d}.pt", epoch, model, optimizer, scheduler, scaler, best_val_loss, args)
 
-        if val_stats is not None and val_stats["loss"] < best_val_loss:
-            best_val_loss = val_stats["loss"]
+        if is_new_best:
             save_checkpoint(weights_dir / "best.pt", epoch, model, optimizer, scheduler, scaler, best_val_loss, args)
             print(f"saved new best.pt | val_loss={best_val_loss:.4f}", flush=True)
 

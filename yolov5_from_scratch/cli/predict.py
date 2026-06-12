@@ -143,12 +143,36 @@ def validate_args(args):
     if args.source is None:
         raise ValueError("--source is required unless it is set by --config")
     args.roi = validate_roi(args.roi)
-    for name in ("conf", "track_conf", "display_conf", "count_conf"):
+    for name in (
+        "conf",
+        "iou",
+        "track_iou",
+        "track_conf",
+        "display_conf",
+        "count_conf",
+        "line_position",
+    ):
         value = getattr(args, name)
         if not 0.0 <= value <= 1.0:
             raise ValueError(f"--{name.replace('_', '-')} must be between 0 and 1")
+    if args.img_size <= 0:
+        raise ValueError("--img-size must be greater than 0")
+    if args.max_det <= 0:
+        raise ValueError("--max-det must be greater than 0")
     if args.output_width < 0:
         raise ValueError("--output-width must be 0 or greater")
+    if args.track_center_distance < 0:
+        raise ValueError("--track-center-distance must be 0 or greater")
+    if args.track_max_age < 0:
+        raise ValueError("--track-max-age must be 0 or greater")
+    if args.min_track_hits < 1:
+        raise ValueError("--min-track-hits must be at least 1")
+    if args.line_margin < 0:
+        raise ValueError("--line-margin must be 0 or greater")
+    if args.max_frames < 0:
+        raise ValueError("--max-frames must be 0 or greater")
+    if args.classes == []:
+        raise ValueError("--classes requires at least one class name or ID")
     if args.count_line != "none" and not args.track:
         raise ValueError("Line counting requires tracking; use --track")
     return args
@@ -174,6 +198,13 @@ def load_profile(path):
         value = profile.get(key)
         if value and not Path(str(value)).is_absolute():
             profile[key] = str((PROJECT_ROOT / str(value)).resolve())
+    source = profile.get("source")
+    if isinstance(source, str):
+        is_stream = source.lower().startswith(
+            ("rtsp://", "rtmp://", "http://", "https://")
+        )
+        if not source.isdigit() and not is_stream and not Path(source).is_absolute():
+            profile["source"] = str((PROJECT_ROOT / source).resolve())
     return profile
 
 
@@ -185,11 +216,11 @@ def run(args):
         )
     names = load_class_names(args.data)
     class_filter = resolve_class_filter(args.classes, names)
-    save_dir = increment_path(
-        Path(args.project) / args.name,
-        exist_ok=args.exist_ok,
-    )
-    save_dir.mkdir(parents=True, exist_ok=True)
+    output_enabled = args.save_media or args.save_csv
+    save_dir = Path(args.project) / args.name
+    if output_enabled:
+        save_dir = increment_path(save_dir, exist_ok=args.exist_ok)
+        save_dir.mkdir(parents=True, exist_ok=True)
 
     predictor = YOLOv5Predictor(
         weights=args.weights,
@@ -229,7 +260,10 @@ def run(args):
         names if class_filter is None else [names[index] for index in sorted(class_filter)]
     )
     print(f"classes = {', '.join(selected_names)}", flush=True)
-    print(f"save_dir = {save_dir.resolve()}", flush=True)
+    print(
+        f"save_dir = {save_dir.resolve() if output_enabled else 'disabled'}",
+        flush=True,
+    )
     run_sources(predictor, tracker, line_counter, save_dir, args)
     return save_dir
 
