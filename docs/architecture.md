@@ -18,7 +18,7 @@
 |   |   |-- dataset/              # convert, inspect, sample, pre-label
 |   |   |-- analysis/             # evaluate and summarize runs
 |   |   `-- dev/                  # debugging helpers
-|   `-- tests/                    # executable tests
+|   `-- tests/                    # executable smoke tests and run_all
 |-- datasets/                     # ignored, local datasets only
 |-- artifacts/                    # ignored checkpoints, predictions, reports
 `-- docs/

@@ -5,7 +5,7 @@ import torch
 from yolov5_from_scratch.data.dataset import build_dataloader
 from yolov5_from_scratch.loss.loss import YoloLoss
 from yolov5_from_scratch.models.yolo import YOLOv5FromScratch
-from yolov5_from_scratch.paths import DATASETS_DIR
+from yolov5_from_scratch.paths import DEFAULT_DATA_CONFIG
 
 
 
@@ -34,7 +34,7 @@ def find_positive_batch(loader, model, criterion, device, max_scan_batches=100):
 def main():
     torch.manual_seed(0)
 
-    data_yaml = DATASETS_DIR / "coco2017" / "dataset.yaml"
+    data_yaml = DEFAULT_DATA_CONFIG
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"device = {device}", flush=True)
 
@@ -51,13 +51,13 @@ def main():
         augment=False,
         shuffle=False,
         verbose=True,
-        rebuild_cache=True,
+        rebuild_cache=False,
     )
     print(f"[2] after build_dataloader | dt={time.time()-t0:.2f}s", flush=True)
 
     print("[3] before model init", flush=True)
-    model = YOLOv5FromScratch(nc=80).to(device)
-    criterion = YoloLoss(model.head, nc=80).to(device)
+    model = YOLOv5FromScratch(nc=5).to(device)
+    criterion = YoloLoss(model.head, nc=5).to(device)
     optimizer = torch.optim.SGD(
         model.parameters(),
         lr=1e-3,

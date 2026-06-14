@@ -5,7 +5,7 @@ import numpy as np
 import torch
 
 from yolov5_from_scratch.data.dataset import build_dataloader
-from yolov5_from_scratch.paths import DATASETS_DIR, REPORTS_DIR
+from yolov5_from_scratch.paths import COCO80_DATA_CONFIG, REPORTS_DIR
 
 
 
@@ -65,7 +65,7 @@ def main():
     save_dir.mkdir(parents=True, exist_ok=True)
 
     dataset, _ = build_dataloader(
-        data_yaml=str(DATASETS_DIR / "coco2017" / "dataset.yaml"),
+        data_yaml=str(COCO80_DATA_CONFIG),
         split="train",
         img_size=640,
         batch_size=4,

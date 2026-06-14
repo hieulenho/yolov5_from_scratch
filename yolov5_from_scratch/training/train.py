@@ -12,7 +12,11 @@ import yaml
 from yolov5_from_scratch.data.dataset import build_dataloader
 from yolov5_from_scratch.loss.loss import YoloLoss
 from yolov5_from_scratch.models.yolo import YOLOv5FromScratch
-from yolov5_from_scratch.paths import DATASETS_DIR, TRAINING_DIR
+from yolov5_from_scratch.paths import (
+    COCO80_DATA_CONFIG,
+    DEFAULT_DATA_CONFIG,
+    TRAINING_DIR,
+)
 from yolov5_from_scratch.training.meters import LossMeters
 
 
@@ -21,7 +25,7 @@ def parse_args():
     parser.add_argument(
         "--data",
         type=str,
-        default=str(DATASETS_DIR / "coco2017" / "dataset.yaml"),
+        default=str(COCO80_DATA_CONFIG),
     )
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--img-size", type=int, default=640)
@@ -212,9 +216,9 @@ def get_checkpoint_class_names(checkpoint):
     if not source_data_path.is_file():
         source_text = str(source_data_path).lower()
         if "coco2017" in source_text:
-            source_data_path = DATASETS_DIR / "coco2017" / "dataset.yaml"
+            source_data_path = COCO80_DATA_CONFIG
         elif "traffic5" in source_text:
-            source_data_path = DATASETS_DIR / "traffic5" / "dataset.yaml"
+            source_data_path = DEFAULT_DATA_CONFIG
     if not source_data_path.is_file():
         return []
     return get_class_names(load_data_yaml(source_data_path))
@@ -466,7 +470,10 @@ def main():
             f"skipped={len(transfer['skipped'])}",
             flush=True,
         )
-        if not transfer["source_names"]:
+        skipped_head = any(
+            key.startswith("head.m.") for key in transfer["skipped"]
+        )
+        if not transfer["source_names"] and skipped_head:
             print(
                 "warning: source class names were unavailable; "
                 "detection head class channels were not transferred",

@@ -8,6 +8,7 @@ PROJECT_ROOT = Path(
 ).resolve()
 
 CONFIGS_DIR = PACKAGE_ROOT / "configs"
+COCO80_DATA_CONFIG = CONFIGS_DIR / "coco80.yaml"
 DATASETS_DIR = Path(
     os.environ.get("YOLO_DATASETS_DIR", PROJECT_ROOT / "datasets")
 ).resolve()

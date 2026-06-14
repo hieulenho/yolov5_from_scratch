@@ -8,7 +8,7 @@ from yolov5_from_scratch.data.dataset import (
     parse_yolo_label_file,
     resolve_data_root,
 )
-from yolov5_from_scratch.paths import DATASETS_DIR
+from yolov5_from_scratch.paths import COCO80_DATA_CONFIG
 
 
 def scan_images(image_dir: Path):
@@ -18,7 +18,7 @@ def scan_images(image_dir: Path):
 
 
 def main():
-    data_yaml = DATASETS_DIR / 'coco2017' / 'dataset.yaml'
+    data_yaml = COCO80_DATA_CONFIG
     cfg = load_yaml(data_yaml)
     data_root = resolve_data_root(data_yaml, cfg.get('path', '.'))
 

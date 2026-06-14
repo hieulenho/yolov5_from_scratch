@@ -2,12 +2,12 @@ import torch
 
 from yolov5_from_scratch.data.dataset import build_dataloader
 from yolov5_from_scratch.models.yolo import YOLOv5FromScratch
-from yolov5_from_scratch.paths import DATASETS_DIR
+from yolov5_from_scratch.paths import DEFAULT_DATA_CONFIG
 
 
 
 def main():
-    data_yaml = DATASETS_DIR / "coco2017" / "dataset.yaml"
+    data_yaml = DEFAULT_DATA_CONFIG
 
     print("[1] before build_dataloader", flush=True)
     dataset, loader = build_dataloader(
@@ -21,7 +21,7 @@ def main():
         augment=False,
         shuffle=False,
         verbose=True,
-        rebuild_cache=True,
+        rebuild_cache=False,
     )
     print("[2] after build_dataloader", flush=True)
     print(f"dataset len = {len(dataset)}", flush=True)
@@ -43,7 +43,7 @@ def main():
         print(targets[:5], flush=True)
 
     print("[4] before model init", flush=True)
-    model = YOLOv5FromScratch(nc=80)
+    model = YOLOv5FromScratch(nc=5)
     model.eval()
     print("[5] after model init", flush=True)
 

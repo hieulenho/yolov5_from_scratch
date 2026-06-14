@@ -9,7 +9,7 @@ import yaml
 from yolov5_from_scratch.data.dataset import build_dataloader
 from yolov5_from_scratch.loss.loss import YoloLoss
 from yolov5_from_scratch.models.yolo import YOLOv5FromScratch
-from yolov5_from_scratch.paths import DATASETS_DIR, REPORTS_DIR
+from yolov5_from_scratch.paths import COCO80_DATA_CONFIG, REPORTS_DIR
 from yolov5_from_scratch.training.meters import CounterMeter, LossMeters
 
 
@@ -18,7 +18,7 @@ def parse_args():
     parser.add_argument(
         "--data",
         type=str,
-        default=str(DATASETS_DIR / "coco2017" / "dataset.yaml"),
+        default=str(COCO80_DATA_CONFIG),
     )
     parser.add_argument("--weights", type=str, default="", help="checkpoint path (.pt). If empty, evaluate random-init model")
     parser.add_argument("--split", type=str, default="val", choices=["train", "val", "test"])

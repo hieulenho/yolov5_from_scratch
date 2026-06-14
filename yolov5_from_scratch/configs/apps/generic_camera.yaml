@@ -1,6 +1,6 @@
 source: 0
 weights: artifacts/checkpoints/coco80/best.pt
-data: datasets/coco2017/dataset.yaml
+data: yolov5_from_scratch/configs/coco80.yaml
 classes: null
 img_size: 640
 conf: 0.05

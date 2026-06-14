@@ -91,7 +91,7 @@ Dùng checkpoint COCO 80 class và không truyền `--classes`:
 ```powershell
 python predict.py `
   --weights artifacts/checkpoints/coco80/best.pt `
-  --data datasets/coco2017/dataset.yaml `
+  --data yolov5_from_scratch/configs/coco80.yaml `
   --source "D:\video\input.mp4" `
   --conf 0.05 `
   --count-line none `
@@ -103,7 +103,7 @@ Chỉ chọn một số class:
 ```powershell
 python predict.py `
   --weights artifacts/checkpoints/coco80/best.pt `
-  --data datasets/coco2017/dataset.yaml `
+  --data yolov5_from_scratch/configs/coco80.yaml `
   --source "D:\video\input.mp4" `
   --classes person car dog cat `
   --conf 0.05 `
@@ -135,7 +135,7 @@ RTSP:
 python camera.py `
   --source "rtsp://user:password@192.168.1.10:554/stream" `
   --weights artifacts/checkpoints/coco80/best.pt `
-  --data datasets/coco2017/dataset.yaml `
+  --data yolov5_from_scratch/configs/coco80.yaml `
   --view
 ```
 
@@ -166,12 +166,12 @@ rate mới. `--resume` chỉ dùng để khôi phục đúng một run bị giá
 kiến trúc, số class, optimizer và tổng số epoch đã định trước.
 
 Checkpoint traffic5 đã hoàn tất 50 epoch. Cách khuyến nghị để train thêm là mở
-một giai đoạn mới 30 epoch từ `last.pt`:
+một giai đoạn mới 30 epoch từ `best.pt`:
 
 ```powershell
 python train.py `
   --data yolov5_from_scratch/configs/traffic5.yaml `
-  --weights artifacts/checkpoints/traffic5/last.pt `
+  --weights artifacts/checkpoints/traffic5/best.pt `
   --epochs 30 `
   --img-size 640 `
   --batch-size 8 `
@@ -182,7 +182,7 @@ python train.py `
   --lr 0.001 `
   --val `
   --project artifacts/training `
-  --name traffic5_resume
+  --name traffic5_stage2
 ```
 
 Không dùng `--resume ... --epochs 80` cho trường hợp này vì learning-rate
@@ -235,9 +235,20 @@ python -m yolov5_from_scratch.tools.analysis.evaluate_detections `
 
 ## Kiểm thử
 
+Chạy toàn bộ smoke test tuần tự:
+
+```powershell
+python -m yolov5_from_scratch.tests.run_all
+```
+
+Hoặc chạy từng nhóm:
+
 ```powershell
 python -m yolov5_from_scratch.tests.test_model
 python -m yolov5_from_scratch.tests.test_runtime
+python -m yolov5_from_scratch.tests.test_dataset
+python -m yolov5_from_scratch.tests.test_model_with_data
+python -m yolov5_from_scratch.tests.test_loss
 python -m yolov5_from_scratch.tests.test_prelabel
 python -m yolov5_from_scratch.tests.test_training_transfer
 ```
@@ -263,6 +274,9 @@ python -m yolov5_from_scratch.tools.maintenance.clean_artifacts `
 
 - Traffic5 được fine-tune phần lớn từ pseudo-label, chưa thay thế ground truth
   được kiểm duyệt thủ công.
+- Traffic5 đang lệch class mạnh: train có 3.823 `person` nhưng chỉ 292
+  `motorcycle` và 205 `bus`; val chỉ có 59 `motorcycle` và 40 `bus`.
+  Cần bổ sung dữ liệu hiếm trước khi đánh giá model cho sản phẩm.
 - Tracker hiện tại dựa trên IoU và khoảng cách tâm; camera triển khai lâu dài
   nên nâng cấp sang ByteTrack.
 - Luồng RTSP hiện chưa tự kết nối lại khi camera hoặc mạng bị ngắt.

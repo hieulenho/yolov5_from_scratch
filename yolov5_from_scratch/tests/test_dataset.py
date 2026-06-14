@@ -1,11 +1,10 @@
 from yolov5_from_scratch.data.dataset import build_dataloader
-from yolov5_from_scratch.paths import DATASETS_DIR
+from yolov5_from_scratch.paths import DEFAULT_DATA_CONFIG
 
 
 def main():
-    data_yaml = DATASETS_DIR / "coco2017" / "dataset.yaml"
+    data_yaml = DEFAULT_DATA_CONFIG
 
-    print("DATASETS DIR:", DATASETS_DIR)
     print("DATA YAML:", data_yaml)
     print("DATA YAML exists:", data_yaml.exists())
 

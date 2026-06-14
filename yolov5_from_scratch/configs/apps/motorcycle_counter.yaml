@@ -1,4 +1,4 @@
-source: D:/videos/traffic2.mp4
+source: null
 weights: artifacts/checkpoints/traffic5/best.pt
 data: yolov5_from_scratch/configs/traffic5.yaml
 classes:

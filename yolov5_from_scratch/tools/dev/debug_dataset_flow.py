@@ -1,9 +1,11 @@
 import argparse
+from pathlib import Path
+
 import numpy as np
 import torch
 
 from yolov5_from_scratch.data.dataset import build_dataloader, YOLODataset
-from yolov5_from_scratch.paths import DATASETS_DIR
+from yolov5_from_scratch.paths import COCO80_DATA_CONFIG
 
 
 def summarize_dataset_samples(ds: YOLODataset, limit: int = 20):
@@ -65,7 +67,7 @@ def main():
     parser.add_argument(
         '--data-yaml',
         type=str,
-        default=str(DATASETS_DIR / 'coco2017' / 'dataset.yaml'),
+        default=str(COCO80_DATA_CONFIG),
     )
     parser.add_argument('--split', type=str, default='train')
     parser.add_argument('--img-size', type=int, default=640)
